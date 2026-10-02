@@ -1,5 +1,5 @@
 """Synthesized 120 BPM electronic track synced to the video cuts. Writes music.wav (stereo, 44.1k)."""
-import wave
+import json, sys, wave
 import numpy as np
 from scipy.signal import butter, sosfilt
 
@@ -8,6 +8,12 @@ BEAT = 60 / BPM
 N = int(SR * DUR)
 CUTS = [2.0, 4.0, 8.0, 14.0, 17.0, 19.0]            # scene changes -> impacts
 WIPES = [1.6, 3.6, 7.6, 13.65, 16.6, 18.65]           # wipe starts -> whooshes
+OUT = "music.wav"
+if len(sys.argv) > 1:  # optional JSON config: {"dur":..,"cuts":[..],"wipes":[..],"out":".."}
+    cfg = json.loads(sys.argv[1])
+    DUR = cfg.get("dur", DUR); CUTS = cfg.get("cuts", CUTS); WIPES = cfg.get("wipes", WIPES); OUT = cfg.get("out", OUT)
+    N = int(SR * DUR)
+END = DUR - 1.0  # drums stop, final hit
 rng = np.random.default_rng(7)
 L, R = np.zeros(N), np.zeros(N)
 
@@ -66,7 +72,7 @@ t_all = np.arange(N) / SR
 side = np.ones(N)
 for b in range(int(DUR / BEAT)):
     t0 = b * BEAT
-    if t0 < 2.0 or 22.0 <= t0: continue
+    if t0 < 2.0 or END <= t0: continue
     s = int(t0 * SR); n = int(BEAT * SR)
     tt = np.arange(min(n, N - s)) / SR
     side[s:s + len(tt)] = 1 - 0.6 * np.minimum(1, tt / 0.006) * np.exp(-tt * 9)
@@ -87,7 +93,7 @@ add(pad * side, 0, pan=-0.2); add(pad * side, 0.012, pan=0.2)
 # pluck arpeggio, 16ths, from bar 2
 for i in range(int(DUR / (BEAT / 4))):
     t0 = i * BEAT / 4
-    if t0 < 4.0 or t0 >= 22.0: continue
+    if t0 < 4.0 or t0 >= END: continue
     ch = PROG[int(t0 // 2) % 4]
     m = (ch + (ch[0] + 12,))[[0, 1, 2, 3, 2, 1, 2, 3][i % 8]] + 12
     n = int(0.25 * SR); tt = np.arange(n) / SR
@@ -98,7 +104,7 @@ for i in range(int(DUR / (BEAT / 4))):
 # drums + bass
 for b in range(int(DUR / BEAT)):
     t0 = b * BEAT
-    if 2.0 <= t0 < 22.0:
+    if 2.0 <= t0 < END:
         add(kick(), t0, 0.9)
         if b % 2: add(clap(), t0, 0.35)
         add(hat(), t0 + BEAT / 2, 0.18, pan=0.3)
@@ -119,13 +125,13 @@ for c in CUTS: add(impact(), c, 0.4)
 for w in WIPES: add(whoosh(), w, 0.35)
 
 # outro: final hit at logo, tail
-add(impact(), 22.0, 0.4)
+add(impact(), END, 0.4)
 
 mix = np.stack([L, R], 1)
 mix *= np.clip((DUR - t_all) / 0.8, 0, 1)[:, None]
 mix = hp(mix.T, 25).T  # remove DC / sub rumble
 mix /= np.abs(mix).max() / 0.84  # peak about -1.5 dBFS, no clipping or saturation
 pcm = (mix * 32767).astype(np.int16)
-with wave.open("music.wav", "wb") as w:
+with wave.open(OUT, "wb") as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
-print("music.wav written")
+print(OUT, "written")
