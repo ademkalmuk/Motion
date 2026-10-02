@@ -6,7 +6,7 @@ import math, subprocess
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-W, H, FPS, DUR = 1080, 1920, 30, 15.5
+W, H, FPS, DUR = 1080, 1920, 30, 16.0
 SUB = 2  # sub-frames per frame for motion blur
 BLUE, WHITE, BLACK = (0x51, 0xA2, 0xFF), (255, 255, 255), (0, 0, 0)
 FONTS = {"black": "fonts/Montserrat_900Black.ttf", "bold": "fonts/Montserrat_700Bold.ttf",
@@ -110,10 +110,10 @@ def s_fark(img, t):  # 2.0 - 4.0, blue
         r = p * 1200
         ImageDraw.Draw(img).ellipse((W / 2 - r, H / 2 - r, W / 2 + r, H / 2 + r), fill=BLACK)
 
-SERVICES = [("WEB", "TASARIM"), ("E-TİCARET", None), ("QR", "MENÜ"),
-            ("SOSYAL", "MEDYA"), ("MOBİL", "SİTE"), ("MARKA", "KİMLİĞİ")]
-SLOT = 0.9
-def s_services(img, t):  # 4.0 - 9.5, black
+SERVICES = [("WEB", "TASARIM"), ("ÖZEL", "YAZILIM"), ("CRM", "ÇÖZÜMLERİ"), ("E-TİCARET", None),
+            ("QR", "MENÜ"), ("SOSYAL", "MEDYA"), ("MOBİL", "SİTE"), ("MARKA", "KİMLİĞİ")]
+SLOT = 0.75
+def s_services(img, t):  # 4.0 - 10.0, black
     d = ImageDraw.Draw(img)
     a = expo(prog(t, 0, 0.5))
     draw_text(d, "HİZMETLERİMİZ", F(40, "bold"), BLUE, W / 2, 330 - (1 - a) * 30, spacing=10)
@@ -135,16 +135,16 @@ def s_services(img, t):  # 4.0 - 9.5, black
     else:
         reveal(img, l1, f, BLUE, W / 2, 880, pin, out=pout)
     # counter + progress
-    draw_text(d, f"0{idx + 1} / 06", F(36, "bold"), WHITE, W / 2, 1400, spacing=4)
+    draw_text(d, f"0{idx + 1} / 0{len(SERVICES)}", F(36, "bold"), WHITE, W / 2, 1400, spacing=4)
     gp = clamp(t / (SLOT * len(SERVICES)))
     d.rectangle((W / 2 - 300, 1480, W / 2 + 300, 1484), fill=(50, 50, 50))
     d.rectangle((W / 2 - 300, 1480, W / 2 - 300 + 600 * gp, 1484), fill=BLUE)
-    wipe(img, WHITE, prog(t, 5.15, 0.35), "right")
+    wipe(img, WHITE, prog(t, 5.65, 0.35), "right")
 
-def s_stats(img, t):  # 9.5 - 11.75, white
+def s_stats(img, t):  # 10.0 - 12.25, white
     img.paste(WHITE, (0, 0, W, H))
     d = ImageDraw.Draw(img)
-    n = min(4, 1 + int(prog(t, 0.0, 0.6) * 4))
+    n = min(6, 1 + int(prog(t, 0.0, 0.6) * 6))
     sc = back(prog(t, 0.0, 0.45))
     if sc > 0:
         draw_text(d, f"{n}+", F(560 * sc), BLACK, W / 2, 560 + (1 - sc) * 200)
@@ -156,19 +156,19 @@ def s_stats(img, t):  # 9.5 - 11.75, white
         draw_text(d, "TRABZON", F(44, "bold"), BLACK, W / 2, 1530 + (1 - p) * 30, spacing=14)
     wipe(img, BLACK, prog(t, 1.9, 0.35), "left")
 
-def s_outro(img, t):  # 11.75 - 15.5, black
+def s_outro(img, t):  # 12.25 - 16.0, black
     d = ImageDraw.Draw(img)
     cx, cy = W / 2, 700
-    p = prog(t, 0.05, 0.6)
+    # brand logo: blue ring draws on, white K mark scales in
+    p = prog(t, 0.0, 0.7)
+    r = 190
     if p > 0:
-        s = 300 * back(p)
-        sq = Image.new("RGBA", (460, 460), (0, 0, 0, 0))
-        sd = ImageDraw.Draw(sq)
-        sd.rounded_rectangle((230 - s / 2, 230 - s / 2, 230 + s / 2, 230 + s / 2), radius=int(s * 0.24), fill=BLUE)
-        if s > 30:
-            draw_text(sd, "K", F(s * 0.6), WHITE, 230, 230 - s * 0.6 * 0.36)
-        sq = sq.rotate(lerp(-90, 0, expo(p)), resample=Image.BICUBIC)
-        img.alpha_composite(sq, (int(cx - 230), int(cy - 230)))
+        d.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + 360 * expo(p), fill=BLUE, width=10)
+    p = prog(t, 0.2, 0.6)
+    if p > 0:
+        sz = max(1, int(330 * back(p)))
+        k = LOGO_K.resize((sz, sz), Image.LANCZOS).rotate(lerp(-25, 0, expo(p)), resample=Image.BICUBIC)
+        img.alpha_composite(k, (int(cx - sz / 2), int(cy - sz / 2)))
     # name, letter stagger
     f = F(150); sp = 6
     name = "KALMUK"
@@ -181,7 +181,7 @@ def s_outro(img, t):  # 11.75 - 15.5, black
     reveal(img, "MEDIA", F(64, "bold"), BLUE, W / 2, 1180, prog(t, 0.8, 0.5), spacing=36)
     p = expo(prog(t, 1.2, 0.5))
     if p > 0:
-        draw_text(d, "Web Tasarım • E-Ticaret • Sosyal Medya", F(38, "med"), (200, 200, 200), W / 2, 1320 + (1 - p) * 30)
+        draw_text(d, "Web Tasarım • Özel Yazılım • CRM", F(38, "med"), (200, 200, 200), W / 2, 1320 + (1 - p) * 30)
     p = back(prog(t, 1.5, 0.5))
     if p > 0:
         bw, bh = 640 * p, 120 * p
@@ -191,9 +191,19 @@ def s_outro(img, t):  # 11.75 - 15.5, black
     if p > 0:
         draw_text(d, "TEKLİF İÇİN DM'DEN YAZIN", F(32, "bold"), WHITE, W / 2, 1600 + (1 - p) * 20, spacing=6)
 
+def _logo_k():
+    """White K mark from logo.png (black disc + white K) as a transparent RGBA."""
+    im = Image.open("logo.png").convert("RGBA")
+    a = np.asarray(im).astype(np.float32)
+    lum = a[..., :3].mean(-1)
+    alpha = np.clip((lum - 60) / 140, 0, 1) * (a[..., 3] / 255)
+    out = np.zeros_like(a); out[..., :3] = 255; out[..., 3] = alpha * 255
+    return Image.fromarray(out.astype(np.uint8))
+LOGO_K = _logo_k()
+
 SCENES = [(0.0, 2.0, s_intro, BLACK, WHITE), (2.0, 4.0, s_fark, BLUE, BLACK),
-          (4.0, 9.5, s_services, BLACK, WHITE), (9.5, 11.75, s_stats, WHITE, BLACK),
-          (11.75, 99, s_outro, BLACK, WHITE)]
+          (4.0, 10.0, s_services, BLACK, WHITE), (10.0, 12.25, s_stats, WHITE, BLACK),
+          (12.25, 99, s_outro, BLACK, WHITE)]
 
 def frame(t):
     for s, e, fn, bg, fg in SCENES:
@@ -208,12 +218,13 @@ def frame(t):
     return a * k
 
 if __name__ == "__main__":
+    subprocess.run(["python3", "music.py"], check=True)
     n = int(FPS * DUR)
     p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                           "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                          "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                          "-i", "music.wav",
                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "slow",
-                          "-c:a", "aac", "-shortest", "-movflags", "+faststart",
+                          "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
                           "kalmuk_media_reels.mp4"], stdin=subprocess.PIPE)
     for i in range(n):
         acc = sum(frame((i + j / SUB) / FPS) for j in range(SUB)) / SUB
