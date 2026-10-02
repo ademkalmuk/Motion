@@ -1,255 +1,222 @@
 """Kalmuk Media - Instagram Reels (9:16) motion graphics promo.
+Brand colors: #51a2ff (blue), #ffffff (white), #000000 (black). Font: Montserrat.
 Render: python3 render.py  -> kalmuk_media_reels.mp4
 """
-import math, subprocess, wave, random
+import math, subprocess
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
-W, H, FPS, DUR = 1080, 1920, 30, 16.0
-N = int(FPS * DUR)
-BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-BG1, BG2 = (10, 8, 30), (35, 10, 70)
-ACC1, ACC2 = (255, 70, 140), (0, 210, 255)
-WHITE = (255, 255, 255)
+W, H, FPS, DUR = 1080, 1920, 30, 15.5
+SUB = 2  # sub-frames per frame for motion blur
+BLUE, WHITE, BLACK = (0x51, 0xA2, 0xFF), (255, 255, 255), (0, 0, 0)
+FONTS = {"black": "fonts/Montserrat_900Black.ttf", "bold": "fonts/Montserrat_700Bold.ttf",
+         "med": "fonts/Montserrat_500Medium.ttf"}
 _fc = {}
-def F(size, bold=True):
-    k = (size, bold)
-    if k not in _fc: _fc[k] = ImageFont.truetype(BOLD if bold else REG, size)
+def F(size, w="black"):
+    k = (int(size), w)
+    if k not in _fc: _fc[k] = ImageFont.truetype(FONTS[w], max(1, int(size)))
     return _fc[k]
 
 def clamp(x, a=0.0, b=1.0): return max(a, min(b, x))
 def prog(t, s, d): return clamp((t - s) / d)
-def eo(x): return 1 - (1 - x) ** 3
-def back(x, s=1.7): x -= 1; return x * x * ((s + 1) * x + s) + 1
+def expo(x): return 1 if x >= 1 else 1 - 2 ** (-10 * x)
+def inout(x): return 4 * x ** 3 if x < .5 else 1 - (-2 * x + 2) ** 3 / 2
+def back(x, s=1.6): x -= 1; return x * x * ((s + 1) * x + s) + 1
 def lerp(a, b, x): return a + (b - a) * x
-def mix(c1, c2, x): return tuple(int(lerp(a, b, x)) for a, b in zip(c1, c2))
 
-# static gradient background
-gy = np.linspace(0, 1, H)[:, None, None]
-BASE = (np.array(BG1) * (1 - gy) + np.array(BG2) * gy).repeat(W, 1).astype(np.uint8)
-random.seed(4)
-PARTS = [(random.uniform(0, W), random.uniform(0, H), random.uniform(1, 4), random.uniform(20, 80)) for _ in range(70)]
-
-def text_c(d, y, s, font, fill, x=W // 2):
-    b = d.textbbox((0, 0), s, font=font)
-    d.text((x - (b[2] - b[0]) / 2 - b[0], y), s, font=font, fill=fill)
-
-def layer_text(s, font, fill):
+def tsize(s, font, spacing=0):
     b = font.getbbox(s)
-    im = Image.new("RGBA", (b[2] + 20, b[3] + 20), (0, 0, 0, 0))
-    ImageDraw.Draw(im).text((10 - b[0], 10), s, font=font, fill=fill)
-    return im
+    return b[2] - b[0] + spacing * (len(s) - 1), b[3] - b[1], b
 
-def paste_alpha(base, im, xy, a):
+def draw_text(d, s, font, fill, cx, y, spacing=0, stroke=0, stroke_fill=None):
+    """Draw text horizontally centered at cx, top at y (ink box)."""
+    w, h, b = tsize(s, font, spacing)
+    x = cx - w / 2
+    if spacing == 0:
+        d.text((x - b[0], y - b[1]), s, font=font, fill=fill, stroke_width=stroke, stroke_fill=stroke_fill)
+    else:
+        for ch in s:
+            d.text((x - b[0], y - b[1]), ch, font=font, fill=fill)
+            x += font.getlength(ch) + spacing
+
+def reveal(img, s, font, fill, cx, y, p, spacing=0, out=0.0):
+    """Masked slide-up reveal: text rises from below a clip line (p 0->1); out 0->1 pushes it up and away."""
+    if p <= 0 or out >= 1: return
+    w, h, b = tsize(s, font, spacing)
+    pad = int(h * 0.25)
+    lay = Image.new("RGBA", (int(w) + 40, h + 2 * pad), (0, 0, 0, 0))
+    off = (1 - expo(p)) * (h + pad) - inout(out) * (h + pad)
+    draw_text(ImageDraw.Draw(lay), s, font, fill, lay.width / 2, pad + off, spacing)
+    img.alpha_composite(lay, (int(cx - lay.width / 2), int(y - pad)))
+
+def wipe(img, color, p, direction):
+    """Full-screen color panel sliding in. direction: up/down/left/right."""
+    if p <= 0: return
+    d = ImageDraw.Draw(img)
+    e = inout(p)
+    if direction == "up": d.rectangle((0, H * (1 - e), W, H), fill=color)
+    elif direction == "left": d.rectangle((W * (1 - e), 0, W, H), fill=color)
+    elif direction == "right": d.rectangle((0, 0, W * e, H), fill=color)
+
+def chrome(img, t, fg):
+    """Persistent UI frame: brand tag, year, corner marks."""
+    d = ImageDraw.Draw(img)
+    a = expo(prog(t, 0.2, 0.6))
     if a <= 0: return
-    if a < 1:
-        r, g, b_, al = im.split()
-        im = Image.merge("RGBA", (r, g, b_, al.point(lambda v: int(v * a))))
-    base.alpha_composite(im, (int(xy[0]), int(xy[1])))
+    f = F(30, "bold")
+    d.text((70, 90 - (1 - a) * 30), "KALMUK MEDIA", font=f, fill=fg)
+    d.text((W - 70 - f.getlength("©2026"), 90 - (1 - a) * 30), "©2026", font=f, fill=fg)
+    L = 40 * a
+    for (x, y, sx, sy) in ((50, 50, 1, 1), (W - 50, 50, -1, 1), (50, H - 50, 1, -1), (W - 50, H - 50, -1, -1)):
+        d.line((x, y, x + L * sx, y), fill=fg, width=4)
+        d.line((x, y, x, y + L * sy), fill=fg, width=4)
 
-def background(t):
-    img = Image.fromarray(BASE).convert("RGBA")
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(ov)
-    # drifting glow blobs
-    for i, c in enumerate((ACC1, ACC2)):
-        cx = W / 2 + math.sin(t * 0.6 + i * 3) * 380
-        cy = H / 2 + math.cos(t * 0.45 + i * 2) * 650
-        d.ellipse((cx - 420, cy - 420, cx + 420, cy + 420), fill=c + (70,))
-    ov = ov.filter(ImageFilter.GaussianBlur(160))
-    img.alpha_composite(ov)
+# ---------------- scenes ----------------
+def s_intro(img, t):  # 0 - 2.0, black
     d = ImageDraw.Draw(img)
-    # grid lines
-    off = (t * 40) % 120
-    for y in np.arange(-120 + off, H, 120):
-        d.line((0, y, W, y), fill=(255, 255, 255, 10))
-    for x in range(0, W, 120):
-        d.line((x, 0, x, H), fill=(255, 255, 255, 10))
-    for (x, y, r, sp) in PARTS:
-        yy = (y - t * sp) % H
-        d.ellipse((x - r, yy - r, x + r, yy + r), fill=(255, 255, 255, 90))
-    return img
+    cy = H / 2
+    p = expo(prog(t, 0.0, 0.5))
+    d.rectangle((W / 2 - 420 * p, cy - 3, W / 2 + 420 * p, cy + 3), fill=BLUE)
+    f = F(170)
+    reveal(img, "DİJİTAL", f, WHITE, W / 2, cy - 200, prog(t, 0.25, 0.5))
+    # second word drops from the line downward (inverted reveal via mirror trick: just slide down)
+    p2 = prog(t, 0.5, 0.5)
+    if p2 > 0:
+        w, h, b = tsize("DÜNYADA", f)
+        lay = Image.new("RGBA", (int(w) + 40, h + 80), (0, 0, 0, 0))
+        draw_text(ImageDraw.Draw(lay), "DÜNYADA", f, WHITE, lay.width / 2, 40 - (1 - expo(p2)) * (h + 40))
+        img.alpha_composite(lay, (int(W / 2 - lay.width / 2), int(cy + 30)))
+    p3 = expo(prog(t, 1.0, 0.4))
+    if p3 > 0:
+        draw_text(d, "BİR ADIM ÖNDE OLUN", F(44, "bold"), BLUE, W / 2, cy + 300 + (1 - p3) * 40, spacing=6)
+    wipe(img, BLUE, prog(t, 1.6, 0.4), "up")
 
-def scene_logo(img, t):  # 0 - 3.4
-    d = ImageDraw.Draw(img)
-    cx, cy = W / 2, H / 2 - 120
-    # expanding rings
-    for i in range(3):
-        p = prog(t, 0.1 + i * 0.15, 1.2)
-        if 0 < p < 1:
-            r = eo(p) * (300 + i * 140)
-            d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(ACC1 if i % 2 == 0 else ACC2) + (int(255 * (1 - p)),), width=6)
-    # K monogram square pops in & rotates
-    p = prog(t, 0.2, 0.8)
+def s_fark(img, t):  # 2.0 - 4.0, blue
+    img.paste(BLUE, (0, 0, W, H))
+    # slow camera push
+    z = 1 + 0.06 * t / 2
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    reveal(lay, "FARK", F(290), BLACK, W / 2, 640, prog(t, 0.0, 0.5))
+    reveal(lay, "YARATIN.", F(150), WHITE, W / 2, 1020, prog(t, 0.2, 0.5))
+    pl = expo(prog(t, 0.6, 0.5))
+    ImageDraw.Draw(lay).rectangle((W / 2 - 200 * pl, 1230, W / 2 + 200 * pl, 1240), fill=BLACK)
+    if z != 1:
+        lay = lay.resize((int(W * z), int(H * z)), Image.BICUBIC)
+        lay = lay.crop(((lay.width - W) // 2, (lay.height - H) // 2, (lay.width - W) // 2 + W, (lay.height - H) // 2 + H))
+    img.alpha_composite(lay)
+    # circle iris into black
+    p = inout(prog(t, 1.6, 0.4))
     if p > 0:
-        s = 260 * back(p)
-        sq = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+        r = p * 1200
+        ImageDraw.Draw(img).ellipse((W / 2 - r, H / 2 - r, W / 2 + r, H / 2 + r), fill=BLACK)
+
+SERVICES = [("WEB", "TASARIM"), ("E-TİCARET", None), ("QR", "MENÜ"),
+            ("SOSYAL", "MEDYA"), ("MOBİL", "SİTE"), ("MARKA", "KİMLİĞİ")]
+SLOT = 0.9
+def s_services(img, t):  # 4.0 - 9.5, black
+    d = ImageDraw.Draw(img)
+    a = expo(prog(t, 0, 0.5))
+    draw_text(d, "HİZMETLERİMİZ", F(40, "bold"), BLUE, W / 2, 330 - (1 - a) * 30, spacing=10)
+    idx = min(len(SERVICES) - 1, int(t // SLOT))
+    lt = t - idx * SLOT
+    # huge faint outlined number behind
+    num = f"0{idx + 1}"
+    np_ = expo(prog(lt, 0, 0.4))
+    draw_text(d, num, F(620), BLACK, W / 2 + (1 - np_) * 120, 620, stroke=3, stroke_fill=(40, 40, 40))
+    # word in/out
+    pin = prog(lt, 0.0, 0.45) if idx > 0 or t > 0.1 else 0
+    if idx == 0: pin = prog(t, 0.1, 0.45)
+    pout = prog(lt, SLOT - 0.25, 0.25) if idx < len(SERVICES) - 1 else 0
+    l1, l2 = SERVICES[idx]
+    f = F(150 if len(l1) < 8 else 130)
+    if l2:
+        reveal(img, l1, f, WHITE, W / 2, 790, pin, out=pout)
+        reveal(img, l2, F(150 if len(l2) < 8 else 130), BLUE, W / 2, 970, prog(lt, 0.08, 0.45) if idx else prog(t, 0.18, 0.45), out=pout)
+    else:
+        reveal(img, l1, f, BLUE, W / 2, 880, pin, out=pout)
+    # counter + progress
+    draw_text(d, f"0{idx + 1} / 06", F(36, "bold"), WHITE, W / 2, 1400, spacing=4)
+    gp = clamp(t / (SLOT * len(SERVICES)))
+    d.rectangle((W / 2 - 300, 1480, W / 2 + 300, 1484), fill=(50, 50, 50))
+    d.rectangle((W / 2 - 300, 1480, W / 2 - 300 + 600 * gp, 1484), fill=BLUE)
+    wipe(img, WHITE, prog(t, 5.15, 0.35), "right")
+
+def s_stats(img, t):  # 9.5 - 11.75, white
+    img.paste(WHITE, (0, 0, W, H))
+    d = ImageDraw.Draw(img)
+    n = min(4, 1 + int(prog(t, 0.0, 0.6) * 4))
+    sc = back(prog(t, 0.0, 0.45))
+    if sc > 0:
+        draw_text(d, f"{n}+", F(560 * sc), BLACK, W / 2, 560 + (1 - sc) * 200)
+    reveal(img, "YIL", F(120), BLUE, W / 2, 1150, prog(t, 0.35, 0.45))
+    reveal(img, "DENEYİM", F(120), BLACK, W / 2, 1290, prog(t, 0.45, 0.45))
+    p = expo(prog(t, 0.8, 0.5))
+    if p > 0:
+        d.rectangle((W / 2 - 160 * p, 1490, W / 2 + 160 * p, 1496), fill=BLUE)
+        draw_text(d, "TRABZON", F(44, "bold"), BLACK, W / 2, 1530 + (1 - p) * 30, spacing=14)
+    wipe(img, BLACK, prog(t, 1.9, 0.35), "left")
+
+def s_outro(img, t):  # 11.75 - 15.5, black
+    d = ImageDraw.Draw(img)
+    cx, cy = W / 2, 700
+    p = prog(t, 0.05, 0.6)
+    if p > 0:
+        s = 300 * back(p)
+        sq = Image.new("RGBA", (460, 460), (0, 0, 0, 0))
         sd = ImageDraw.Draw(sq)
-        sd.rounded_rectangle((200 - s / 2, 200 - s / 2, 200 + s / 2, 200 + s / 2), radius=int(s * 0.22), fill=ACC1 + (255,))
-        if p > 0.4:
-            text_c(sd, 200 - s * 0.38, "K", F(max(1, int(s * 0.62))), WHITE, 200)
-        sq = sq.rotate(lerp(-180, 0, eo(p)), resample=Image.BICUBIC)
-        img.alpha_composite(sq, (int(cx - 200), int(cy - 200)))
-    # letters of name stagger up
+        sd.rounded_rectangle((230 - s / 2, 230 - s / 2, 230 + s / 2, 230 + s / 2), radius=int(s * 0.24), fill=BLUE)
+        if s > 30:
+            draw_text(sd, "K", F(s * 0.6), WHITE, 230, 230 - s * 0.6 * 0.36)
+        sq = sq.rotate(lerp(-90, 0, expo(p)), resample=Image.BICUBIC)
+        img.alpha_composite(sq, (int(cx - 230), int(cy - 230)))
+    # name, letter stagger
+    f = F(150); sp = 6
     name = "KALMUK"
-    f = F(150)
-    total = sum(f.getlength(ch) for ch in name) + 8 * (len(name) - 1)
+    total = tsize(name, f, sp)[0]
     x = W / 2 - total / 2
     for i, ch in enumerate(name):
-        p = prog(t, 0.8 + i * 0.07, 0.5)
-        lt = layer_text(ch, f, WHITE)
-        paste_alpha(img, lt, (x - 10, cy + 200 + (1 - eo(p)) * 120), p)
-        x += f.getlength(ch) + 8
-    p = prog(t, 1.5, 0.6)
-    lt = layer_text("M E D I A", F(70), ACC2)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, cy + 390), eo(p))
-    # underline sweep
-    p = eo(prog(t, 1.7, 0.6))
-    d = ImageDraw.Draw(img)
-    d.rectangle((W / 2 - 300 * p, cy + 500, W / 2 + 300 * p, cy + 508), fill=ACC1)
+        cw = f.getlength(ch)
+        reveal(img, ch, f, WHITE, x + cw / 2, 1000, prog(t, 0.45 + i * 0.05, 0.5))
+        x += cw + sp
+    reveal(img, "MEDIA", F(64, "bold"), BLUE, W / 2, 1180, prog(t, 0.8, 0.5), spacing=36)
+    p = expo(prog(t, 1.2, 0.5))
+    if p > 0:
+        draw_text(d, "Web Tasarım • E-Ticaret • Sosyal Medya", F(38, "med"), (200, 200, 200), W / 2, 1320 + (1 - p) * 30)
+    p = back(prog(t, 1.5, 0.5))
+    if p > 0:
+        bw, bh = 640 * p, 120 * p
+        d.rounded_rectangle((W / 2 - bw / 2, 1480 - bh / 2, W / 2 + bw / 2, 1480 + bh / 2), radius=int(bh / 2), fill=BLUE)
+        if p > 0.7: draw_text(d, "kalmukmedia.com.tr", F(46, "bold"), BLACK, W / 2, 1480 - 22)
+    p = expo(prog(t, 1.9, 0.5))
+    if p > 0:
+        draw_text(d, "TEKLİF İÇİN DM'DEN YAZIN", F(32, "bold"), WHITE, W / 2, 1600 + (1 - p) * 20, spacing=6)
 
-def scene_head(img, t):  # 3.4 - 6.6
-    lines = [("Dijital dünyada", WHITE), ("FARK", ACC1), ("yaratın.", WHITE)]
-    sizes = [90, 240, 90]
-    y = 620
-    for i, ((s, c), sz) in enumerate(zip(lines, sizes)):
-        p = eo(prog(t, i * 0.25, 0.6))
-        lt = layer_text(s, F(sz), c)
-        # mask wipe left to right
-        w = int(lt.width * p)
-        if w > 0:
-            m = Image.new("L", lt.size, 0); ImageDraw.Draw(m).rectangle((0, 0, w, lt.height), fill=255)
-            lt.putalpha(Image.composite(lt.split()[3], m, m))
-            img.alpha_composite(lt, (int(W / 2 - lt.width / 2 + (1 - p) * -60), y))
-        y += sz + 50
-    p = eo(prog(t, 1.2, 0.7))
-    lt = layer_text("Web Tasarım & Dijital Çözümler", F(50, False), ACC2)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, y + 40 + (1 - p) * 40), p)
-
-SERVICES = [("</>", "Web Tasarım"), ("🛒", "E-Ticaret"), ("QR", "QR Menü"),
-            ("#", "Sosyal Medya"), ("☎", "Mobil Site"), ("★", "Marka Kimliği")]
-def scene_services(img, t):  # 6.6 - 11.4
-    p = eo(prog(t, 0, 0.5))
-    lt = layer_text("HİZMETLERİMİZ", F(90), WHITE)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, 260 - (1 - p) * 60), p)
-    d = ImageDraw.Draw(img)
-    d.rectangle((W / 2 - 120 * p, 390, W / 2 + 120 * p, 398), fill=ACC1)
-    cw, ch, gx, gy0 = 440, 340, 60, 500
-    for i, (ic, name) in enumerate(SERVICES):
-        p = prog(t, 0.4 + i * 0.22, 0.6)
-        if p <= 0: continue
-        col, row = i % 2, i // 2
-        x0 = W / 2 - cw - gx / 2 + col * (cw + gx)
-        y0 = gy0 + row * (ch + 50)
-        sc = back(p)
-        card = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(card)
-        acc = ACC1 if (i % 2 == row % 2) else ACC2
-        cd.rounded_rectangle((0, 0, cw - 1, ch - 1), radius=40, fill=(255, 255, 255, 22), outline=acc + (200,), width=4)
-        cd.ellipse((cw / 2 - 70, 45, cw / 2 + 70, 185), fill=acc + (255,))
-        icon = ic if ic not in ("🛒",) else "₺"
-        text_c(cd, 72, icon, F(70 if len(icon) < 3 else 52), WHITE, cw / 2)
-        text_c(cd, 225, name, F(46), WHITE, cw / 2)
-        nw, nh = max(1, int(cw * sc)), max(1, int(ch * sc))
-        card = card.resize((nw, nh), Image.BICUBIC)
-        paste_alpha(img, card, (x0 + (cw - nw) / 2, y0 + (ch - nh) / 2), clamp(p * 2))
-    # float bob after appear
-def scene_stats(img, t):  # 11.4 - 13.6
-    d = ImageDraw.Draw(img)
-    cx, cy = W / 2, 820
-    p = eo(prog(t, 0, 1.0))
-    r = 300
-    d.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + 360 * p, fill=ACC1, width=24)
-    d.arc((cx - r + 40, cy - r + 40, cx + r - 40, cy + r - 40), 90, 90 + 360 * p, fill=ACC2, width=10)
-    n = int(round(4 * p))
-    text_c(d, cy - 190, f"{n}+", F(260), WHITE)
-    p2 = eo(prog(t, 0.6, 0.6))
-    lt = layer_text("YILLIK DENEYİM", F(80), WHITE)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, cy + r + 80 + (1 - p2) * 50), p2)
-    p3 = eo(prog(t, 0.9, 0.6))
-    lt = layer_text("📍 Trabzon'dan tüm Türkiye'ye".replace("📍 ", ""), F(52, False), ACC2)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, cy + r + 200 + (1 - p3) * 50), p3)
-
-def scene_cta(img, t):  # 13.6 - 16
-    d = ImageDraw.Draw(img)
-    p = eo(prog(t, 0, 0.6))
-    lt = layer_text("Projenizi", F(110), WHITE)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, 560 - (1 - p) * 80), p)
-    p = eo(prog(t, 0.15, 0.6))
-    lt = layer_text("hayata geçirelim!", F(90), ACC1)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, 700 - (1 - p) * 80), p)
-    # pulsing button
-    p = back(prog(t, 0.4, 0.6))
-    pulse = 1 + 0.04 * math.sin(t * 8) if t > 1 else 1
-    bw, bh = 620 * p * pulse, 150 * p * pulse
-    if bw > 2:
-        d.rounded_rectangle((W / 2 - bw / 2, 1000 - bh / 2, W / 2 + bw / 2, 1000 + bh / 2), radius=int(bh / 2), fill=ACC1)
-        if p > 0.6: text_c(d, 1000 - 40, "ÜCRETSİZ TEKLİF AL", F(56), WHITE)
-    p = eo(prog(t, 0.8, 0.6))
-    lt = layer_text("kalmukmedia.com.tr", F(70), ACC2)
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, 1180 + (1 - p) * 40), p)
-    p = eo(prog(t, 1.0, 0.6))
-    lt = layer_text("KALMUK MEDIA", F(48, False), (255, 255, 255))
-    paste_alpha(img, lt, (W / 2 - lt.width / 2, 1650), p * 0.8)
-
-SCENES = [(0, 3.4, scene_logo), (3.4, 6.6, scene_head), (6.6, 11.4, scene_services),
-          (11.4, 13.6, scene_stats), (13.6, 16.01, scene_cta)]
+SCENES = [(0.0, 2.0, s_intro, BLACK, WHITE), (2.0, 4.0, s_fark, BLUE, BLACK),
+          (4.0, 9.5, s_services, BLACK, WHITE), (9.5, 11.75, s_stats, WHITE, BLACK),
+          (11.75, 99, s_outro, BLACK, WHITE)]
 
 def frame(t):
-    img = background(t)
-    for s, e, fn in SCENES:
+    for s, e, fn, bg, fg in SCENES:
         if s <= t < e:
-            fg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            fn(fg, t - s)
-            # scene exit: fade + zoom
-            out = prog(t, e - 0.3, 0.3) if e < DUR else 0
-            if out > 0:
-                z = 1 + out * 0.15
-                fg = fg.resize((int(W * z), int(H * z)), Image.BILINEAR)
-                fg = fg.crop(((fg.width - W) // 2, (fg.height - H) // 2, (fg.width - W) // 2 + W, (fg.height - H) // 2 + H))
-                fg.putalpha(fg.split()[3].point(lambda v: int(v * (1 - out))))
-            img.alpha_composite(fg)
-            # transition flash bar
-            tp = prog(t, e - 0.25, 0.5)
-            if 0 < tp < 1 and e < DUR:
-                dd = ImageDraw.Draw(img)
-                x = lerp(-W, W * 2, eo(tp))
-                dd.polygon([(x - 200, 0), (x + 100, 0), (x - 100, H), (x - 400, H)], fill=ACC1 + (200,))
-    # progress bar
-    ImageDraw.Draw(img).rectangle((0, H - 10, W * t / DUR, H), fill=ACC2)
-    return img.convert("RGB")
-
-def music(path):
-    sr = 44100; n = int(sr * DUR); t = np.arange(n) / sr
-    bpm = 120; beat = 60 / bpm
-    out = np.zeros(n)
-    for k in range(int(DUR / beat)):  # kick
-        s = int(k * beat * sr); L = int(0.3 * sr); tt = np.arange(L) / sr
-        seg = np.sin(2 * np.pi * (50 + 120 * np.exp(-tt * 30)) * tt) * np.exp(-tt * 9)
-        out[s:s + L] += seg[: n - s] * 0.8
-        if k % 2:  # hat
-            hs = int((k * beat + beat / 2) * sr); hl = int(0.05 * sr)
-            out[hs:hs + hl] += np.random.randn(min(hl, n - hs)) * np.exp(-np.arange(min(hl, n - hs)) / sr * 80) * 0.15
-    chords = [(220, 277.2, 329.6), (174.6, 220, 261.6), (196, 246.9, 293.7), (164.8, 207.7, 246.9)]
-    for i in range(int(DUR / (beat * 4)) + 1):
-        s = int(i * beat * 4 * sr); e = min(n, int((i + 1) * beat * 4 * sr))
-        tt = t[s:e]
-        for f in chords[i % 4]:
-            out[s:e] += 0.07 * np.sign(np.sin(2 * np.pi * f * tt)) * 0.5 + 0.08 * np.sin(2 * np.pi * f * tt)
-    out *= np.minimum(1, (DUR - t) / 1.0)
-    out = np.int16(np.clip(out / np.abs(out).max() * 0.8, -1, 1) * 32767)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(out.tobytes())
+            img = Image.new("RGBA", (W, H), bg + (255,))
+            fn(img, t - s)
+            chrome(img, t, fg if t - s > 0.15 or s == 0 else fg)
+            break
+    a = np.asarray(img.convert("RGB"), dtype=np.float32)
+    # fade from / to black
+    k = min(prog(t, 0, 0.25), 1 - prog(t, DUR - 0.4, 0.4))
+    return a * k
 
 if __name__ == "__main__":
-    music("music.wav")
+    n = int(FPS * DUR)
     p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                          "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-i", "music.wav",
-                          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "medium",
-                          "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
+                          "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
+                          "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "slow",
+                          "-c:a", "aac", "-shortest", "-movflags", "+faststart",
                           "kalmuk_media_reels.mp4"], stdin=subprocess.PIPE)
-    for i in range(N):
-        p.stdin.write(frame(i / FPS).tobytes())
+    for i in range(n):
+        acc = sum(frame((i + j / SUB) / FPS) for j in range(SUB)) / SUB
+        p.stdin.write(acc.astype(np.uint8).tobytes())
     p.stdin.close(); p.wait()
     print("done")
