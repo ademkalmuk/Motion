@@ -3,11 +3,11 @@ import wave
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-SR, DUR, BPM = 44100, 16.0, 120
+SR, DUR, BPM = 44100, 23.0, 120
 BEAT = 60 / BPM
 N = int(SR * DUR)
-CUTS = [2.0, 4.0, 10.0, 12.25]            # scene changes -> impacts
-WIPES = [1.6, 3.6, 9.65, 11.9]           # wipe starts -> whooshes
+CUTS = [2.0, 4.0, 8.0, 14.0, 17.0, 19.0]            # scene changes -> impacts
+WIPES = [1.6, 3.6, 7.6, 13.65, 16.6, 18.65]           # wipe starts -> whooshes
 rng = np.random.default_rng(7)
 L, R = np.zeros(N), np.zeros(N)
 
@@ -50,12 +50,12 @@ def impact():
 def whoosh(d=0.45):
     n = int(d * SR); t = np.arange(n) / SR
     x = rng.standard_normal(n)
-    # sweep band by blending lp of increasing cutoff
-    out = np.zeros(n); seg = n // 8
-    for i in range(8):
-        f = 300 * 2 ** (i * 0.7)
-        out[i * seg:(i + 1) * seg] = lp(x, min(f, 15000))[i * seg:(i + 1) * seg]
-    return out * np.sin(np.pi * t / d) ** 2
+    fc = 300 * (40 ** (t / d))
+    k = 1 - np.exp(-2 * np.pi * fc / SR)
+    out = np.empty(n); y = 0.0
+    for i in range(n):
+        y += k[i] * (x[i] - y); out[i] = y
+    return hp(out, 150) * np.sin(np.pi * t / d) ** 2
 
 # --- chords: Am F C G (one bar = 4 beats = 2s each) ---
 PROG = [(57, 60, 64), (53, 57, 60), (48, 52, 55), (55, 59, 62)]
@@ -66,26 +66,28 @@ t_all = np.arange(N) / SR
 side = np.ones(N)
 for b in range(int(DUR / BEAT)):
     t0 = b * BEAT
-    if t0 < 2.0 or 15.0 <= t0: continue
+    if t0 < 2.0 or 22.0 <= t0: continue
     s = int(t0 * SR); n = int(BEAT * SR)
     tt = np.arange(min(n, N - s)) / SR
-    side[s:s + len(tt)] = 1 - 0.75 * np.exp(-tt * 9)
+    side[s:s + len(tt)] = 1 - 0.6 * np.minimum(1, tt / 0.006) * np.exp(-tt * 9)
+side = np.convolve(side, np.ones(64) / 64, 'same')
 
+bar_idx = (t_all // 2).astype(int) % 4
+smooth = lambda f: np.convolve(np.pad(f, (441, 441), mode="edge"), np.ones(882) / 882, "valid")[:N]
 pad = np.zeros(N)
-for bar in range(8):
-    s, e = int(bar * 2 * SR), min(N, int((bar + 1) * 2 * SR))
-    tt = t_all[s:e]
-    for m in PROG[bar % 4]:
-        for det in (-0.08, 0.08):
-            pad[s:e] += saw(note(m + 12) * (1 + det / 100 * 12), tt)
-pad = lp(pad, 1800) * 0.06
+for v in range(3):
+    f = smooth(np.array([note(PROG[b][v] + 12) for b in range(4)])[bar_idx])
+    for det in (-0.1, 0.1):
+        ph = np.cumsum(f * 2 ** (det / 12)) / SR
+        pad += 2 * (ph % 1) - 1
+pad = lp(pad, 1600) * 0.05
 pad *= np.clip(t_all / 1.5, 0, 1)
 add(pad * side, 0, pan=-0.2); add(pad * side, 0.012, pan=0.2)
 
 # pluck arpeggio, 16ths, from bar 2
 for i in range(int(DUR / (BEAT / 4))):
     t0 = i * BEAT / 4
-    if t0 < 4.0 or t0 >= 15.0: continue
+    if t0 < 4.0 or t0 >= 22.0: continue
     ch = PROG[int(t0 // 2) % 4]
     m = (ch + (ch[0] + 12,))[[0, 1, 2, 3, 2, 1, 2, 3][i % 8]] + 12
     n = int(0.25 * SR); tt = np.arange(n) / SR
@@ -96,7 +98,7 @@ for i in range(int(DUR / (BEAT / 4))):
 # drums + bass
 for b in range(int(DUR / BEAT)):
     t0 = b * BEAT
-    if 2.0 <= t0 < 15.0:
+    if 2.0 <= t0 < 22.0:
         add(kick(), t0, 0.9)
         if b % 2: add(clap(), t0, 0.35)
         add(hat(), t0 + BEAT / 2, 0.18, pan=0.3)
@@ -113,16 +115,16 @@ n = int(2.0 * SR); tt = np.arange(n) / SR
 rise = lp(rng.standard_normal(n), 6000) * (tt / 2) ** 2 * 0.25 + np.sin(2 * np.pi * np.cumsum(200 + 600 * (tt / 2) ** 2) / SR) * (tt / 2) ** 2 * 0.08
 add(rise, 0.0)
 
-for c in CUTS: add(impact(), c, 0.55)
+for c in CUTS: add(impact(), c, 0.4)
 for w in WIPES: add(whoosh(), w, 0.35)
 
 # outro: final hit at logo, tail
-add(impact(), 15.0, 0.4)
+add(impact(), 22.0, 0.4)
 
 mix = np.stack([L, R], 1)
 mix *= np.clip((DUR - t_all) / 0.8, 0, 1)[:, None]
-mix = np.tanh(mix * 1.3)
-mix /= np.abs(mix).max() / 0.9
+mix = hp(mix.T, 25).T  # remove DC / sub rumble
+mix /= np.abs(mix).max() / 0.84  # peak about -1.5 dBFS, no clipping or saturation
 pcm = (mix * 32767).astype(np.int16)
 with wave.open("music.wav", "wb") as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
