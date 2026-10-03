@@ -6,6 +6,7 @@ npm install
 npm run studio                 # tarayıcıda canlı önizleme / düzenleme
 npm run render:huner           # out/referans_huner.mp4 (1080x1920, 30fps)
 npm run render:promo           # out/kalmuk_media_reels.mp4
+npm run render:crm             # out/kalmuk_crm.mp4 (demo veriler)
 ```
 
 Bulut ortamında Chromium indirmek yerine hazır olanı kullanmak için:
