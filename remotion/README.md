@@ -10,7 +10,7 @@ npm run render:crm             # out/kalmuk_crm.mp4 (demo veriler)
 ```
 
 Bulut ortamında Chromium indirmek yerine hazır olanı kullanmak için:
-`--browser-executable=/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell`
+`--browser-executable=/opt/pw-browsers/chromium`
 
 ## Yapı
 - `src/brand.ts` – Kalmuk (#51a2ff / #fff / #000) ve Hüner (#0b4fd1) renkleri
